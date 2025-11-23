@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filter Tweet Region</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 400px;
+      max-height: 600px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #000;
+      color: #fff;
+    }
+    
+    .header {
+      padding: 16px;
+      border-bottom: 1px solid #2f3336;
+    }
+    
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: #536471;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .toggle.active {
+      background: #1d9bf0;
+    }
+    
+    .toggle-slider {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    
+    .toggle.active .toggle-slider {
+      transform: translateX(20px);
+    }
+    
+    .content {
+      padding: 16px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    
+    .search-box {
+      width: 100%;
+      padding: 8px 12px;
+      background: #202327;
+      border: 1px solid #2f3336;
+      border-radius: 20px;
+      color: #fff;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    
+    .search-box:focus {
+      outline: none;
+      border-color: #1d9bf0;
+    }
+    
+    .countries-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .country-item {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .country-item:hover {
+      background: #16181c;
+    }
+    
+    .country-checkbox {
+      width: 18px;
+      height: 18px;
+      margin-right: 12px;
+      cursor: pointer;
+      accent-color: #1d9bf0;
+    }
+    
+    .country-name {
+      font-size: 14px;
+      color: #e7e9ea;
+    }
+    
+    .footer {
+      padding: 16px;
+      border-top: 1px solid #2f3336;
+      text-align: center;
+    }
+    
+    .footer-info {
+      font-size: 12px;
+      color: #71767b;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🌍 Filter Tweet Region</h1>
+    <div class="toggle-container">
+      <span style="font-size: 14px; color: #e7e9ea;">Ativar filtro</span>
+      <div class="toggle" id="filterToggle">
+        <div class="toggle-slider"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="content">
+    <input type="text" class="search-box" id="searchBox" placeholder="Buscar país...">
+    <div class="countries-list" id="countriesList"></div>
+  </div>
+  
+  <div class="footer">
+    <div class="footer-info">Selecione os países que deseja ver nos tweets</div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
+
