@@ -4,15 +4,15 @@ function askRegion(username) {
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       window.removeEventListener("message", handler);
-      console.warn(`[FilterTweetRegion] Timeout ao buscar região para @${username}`);
+      console.warn(`[FilterTweetRegion] ⚠️ Timeout ao buscar região para @${username} (5s)`);
       resolve(null);
-    }, 10000);
+    }, 5000); // Reduzido de 10s para 5s
 
     function handler(e) {
       if (e.data?.type === "REGION_RESULT" && e.data.username === username) {
         clearTimeout(timeout);
         window.removeEventListener("message", handler);
-        console.log(`[FilterTweetRegion] Região recebida para @${username}:`, e.data.region);
+        console.log(`[FilterTweetRegion] ✅ Região recebida para @${username}:`, e.data.region);
         resolve(e.data.region);
       }
     }

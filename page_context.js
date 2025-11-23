@@ -4,38 +4,86 @@
   let cachedBearerToken = null;
   let cachedHeaders = null;
   const CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000;
-  const REQUEST_INTERVAL = 1000;
-  const MAX_REQUESTS_PER_MINUTE = 15;
-  const DEBOUNCE_MIN = 500;
-  const DEBOUNCE_MAX = 1500;
+  const TOKEN_CACHE_KEY = 'filter_tweet_region_bearer_token';
+  const TOKEN_CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 horas
 
+  // Carrega token do localStorage ao iniciar
+  function loadCachedToken() {
+    try {
+      const stored = localStorage.getItem(TOKEN_CACHE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.token && parsed.timestamp && (Date.now() - parsed.timestamp) < TOKEN_CACHE_EXPIRY) {
+          cachedBearerToken = parsed.token;
+          console.log('[FilterTweetRegion-Page] ✅ Bearer token carregado do cache');
+          return true;
+        } else {
+          // Token expirado, remove do cache
+          localStorage.removeItem(TOKEN_CACHE_KEY);
+        }
+      }
+    } catch (e) {
+      console.warn('[FilterTweetRegion-Page] Erro ao carregar token do cache:', e);
+    }
+    return false;
+  }
+
+  // Salva token no localStorage
+  function saveCachedToken(token) {
+    try {
+      const tokenData = {
+        token: token,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(tokenData));
+      console.log('[FilterTweetRegion-Page] ✅ Bearer token salvo no cache');
+    } catch (e) {
+      console.warn('[FilterTweetRegion-Page] Erro ao salvar token no cache:', e);
+    }
+  }
+
+  // Carrega token ao iniciar
+  loadCachedToken();
+  const REQUEST_INTERVAL = 500; // Reduzido de 1000ms para 500ms
+  const MAX_REQUESTS_PER_MINUTE = 20; // Aumentado de 15 para 20
+  const DEBOUNCE_MIN = 100; // Reduzido de 500ms
+  const DEBOUNCE_MAX = 300; // Reduzido de 1500ms
+  const FETCH_TIMEOUT = 8000; // Timeout de 8 segundos para requisições
+
+  // Interceptação melhorada de fetch
   const originalFetch = window.fetch;
-  window.fetch = function(...args) {
-    const url = args[0];
-    const options = args[1] || {};
+  window.fetch = async function(...args) {
+    const [url, opts] = args;
     
+    // Captura Bearer token de qualquer requisição para x.com/i/api
     if (url && typeof url === 'string' && url.includes('x.com/i/api')) {
-      if (options.headers) {
-        const headers = options.headers;
+      if (opts?.headers) {
+        const headers = opts.headers;
         let authHeader = null;
         let csrfHeader = null;
         
+        // Suporta Headers object e plain object
         if (headers instanceof Headers) {
           authHeader = headers.get('authorization') || headers.get('Authorization');
           csrfHeader = headers.get('x-csrf-token') || headers.get('X-Csrf-Token');
         } else if (typeof headers === 'object') {
-          authHeader = headers['authorization'] || headers['Authorization'];
-          csrfHeader = headers['x-csrf-token'] || headers['X-Csrf-Token'];
+          authHeader = headers['authorization'] || headers['Authorization'] || headers['authorization'];
+          csrfHeader = headers['x-csrf-token'] || headers['X-Csrf-Token'] || headers['x-csrf-token'];
         }
         
-        if (authHeader && authHeader.startsWith('Bearer ')) {
+        // Captura Bearer token
+        if (authHeader && (authHeader.startsWith('Bearer ') || authHeader.startsWith('bearer '))) {
           const token = authHeader.substring(7).trim();
-          if (token.length > 50 && token.length < 200 && (!cachedBearerToken || cachedBearerToken.length < 50)) {
-            cachedBearerToken = token;
-            console.log('[FilterTweetRegion-Page] Bearer token captured from fetch:', token.substring(0, 20) + '...');
+          if (token.length > 50 && token.length < 200) {
+            if (!cachedBearerToken || cachedBearerToken.length < 50) {
+              cachedBearerToken = token;
+              saveCachedToken(token); // Salva no localStorage
+              console.log('[FilterTweetRegion-Page] ✅ Bearer token captured from fetch:', token.substring(0, 30) + '...');
+            }
           }
         }
         
+        // Captura headers completos na primeira vez
         if (!cachedHeaders && (authHeader || cachedBearerToken)) {
           const csrf = csrfHeader || getCSRF();
           
@@ -50,12 +98,46 @@
             'Referer': headers instanceof Headers ? headers.get('Referer') : (headers['Referer'] || 'https://x.com/'),
           };
           
-          console.log('[FilterTweetRegion-Page] Headers captured from fetch');
+          console.log('[FilterTweetRegion-Page] ✅ Headers captured from fetch');
         }
       }
     }
     
     return originalFetch.apply(this, args);
+  };
+
+  // Interceptação de XMLHttpRequest
+  const originalXHROpen = XMLHttpRequest.prototype.open;
+  const originalXHRSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this._url = url;
+    return originalXHROpen.apply(this, [method, url, ...rest]);
+  };
+
+  XMLHttpRequest.prototype.send = function(body) {
+    if (this._url && typeof this._url === 'string' && this._url.includes('x.com/i/api')) {
+      this.addEventListener('readystatechange', function() {
+        if (this.readyState === 1) { // OPENED
+          try {
+            const auth = this.getRequestHeader ? this.getRequestHeader('Authorization') : null;
+            if (auth && (auth.startsWith('Bearer ') || auth.startsWith('bearer '))) {
+              const token = auth.substring(7).trim();
+              if (token.length > 50 && token.length < 200) {
+            if (!cachedBearerToken || cachedBearerToken.length < 50) {
+              cachedBearerToken = token;
+              saveCachedToken(token); // Salva no localStorage
+              console.log('[FilterTweetRegion-Page] ✅ Bearer token captured from XHR:', token.substring(0, 30) + '...');
+            }
+              }
+            }
+          } catch (e) {
+            // Alguns navegadores não permitem acesso aos headers
+          }
+        }
+      }, { once: true });
+    }
+    return originalXHRSend.apply(this, arguments);
   };
 
   function getBearerToken() {
@@ -88,7 +170,8 @@
       const token = extractTokenFromText(s.textContent || s.innerText || '');
       if (token) {
         cachedBearerToken = token;
-        console.log('[FilterTweetRegion-Page] Bearer token found via script');
+        saveCachedToken(token); // Salva no localStorage
+        console.log('[FilterTweetRegion-Page] ✅ Bearer token found via script');
         return token;
       }
     }
@@ -130,7 +213,7 @@
   }
 
   let tokenCaptureAttempts = 0;
-  const MAX_TOKEN_CAPTURE_ATTEMPTS = 30;
+  const MAX_TOKEN_CAPTURE_ATTEMPTS = 10; // Reduzido de 30 para 10 segundos
   
   async function waitForTokenCapture() {
     if (cachedBearerToken && cachedBearerToken.length > 50) {
@@ -143,11 +226,11 @@
         attempts++;
         if (cachedBearerToken && cachedBearerToken.length > 50) {
           clearInterval(checkInterval);
-          console.log('[FilterTweetRegion-Page] Bearer token captured after waiting');
+          console.log('[FilterTweetRegion-Page] ✅ Bearer token captured after waiting');
           resolve(true);
         } else if (attempts >= MAX_TOKEN_CAPTURE_ATTEMPTS) {
           clearInterval(checkInterval);
-          console.warn('[FilterTweetRegion-Page] Bearer token not captured, will use default (may have rate limits)');
+          console.warn('[FilterTweetRegion-Page] ⚠️ Bearer token not captured, will use default (may have rate limits)');
           resolve(false);
         }
       }, 1000);
@@ -265,8 +348,15 @@
       return cached;
     }
 
+    // Aguarda token apenas se não tiver (com timeout menor)
     if (!cachedBearerToken || cachedBearerToken.length < 50) {
-      await waitForTokenCapture();
+      const tokenCaptured = await Promise.race([
+        waitForTokenCapture(),
+        new Promise(resolve => setTimeout(() => resolve(false), 3000)) // Timeout de 3s
+      ]);
+      if (!tokenCaptured && !cachedBearerToken) {
+        console.warn(`[FilterTweetRegion-Page] Token not captured in time for @${username}`);
+      }
     }
 
     const csrf = getCSRF();
@@ -288,11 +378,18 @@
     console.log(`[FilterTweetRegion-Page] Fetching region for @${username}...`);
 
     try {
+      // Adiciona timeout à requisição
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+      
       const res = await originalFetch(url, {
         method: "GET",
         credentials: "include",
-        headers: headers
+        headers: headers,
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
 
       console.log(`[FilterTweetRegion-Page] Response for @${username}:`, res.status, res.statusText);
 
@@ -330,6 +427,10 @@
         if (res.status === 401 || res.status === 403) {
           cachedBearerToken = null;
           cachedHeaders = null;
+          // Remove token inválido do cache
+          try {
+            localStorage.removeItem(TOKEN_CACHE_KEY);
+          } catch (e) {}
           console.warn(`[FilterTweetRegion-Page] Auth error, clearing cached tokens`);
           return "error_auth";
         }
@@ -344,17 +445,29 @@
       
       return region;
     } catch (error) {
+      if (error.name === 'AbortError') {
+        console.warn(`[FilterTweetRegion-Page] Request timeout for @${username}`);
+        return "error_timeout";
+      }
       console.error(`[FilterTweetRegion-Page] Fetch error for @${username}:`, error);
       return "error_fetch";
     }
   }
 
   async function getRegion(username) {
+    // Verifica cache primeiro antes de adicionar à fila
+    const cached = await getCachedRegion(username);
+    if (cached !== null) {
+      return cached;
+    }
+    
     return new Promise((resolve, reject) => {
+      // Remove debounce antigo se existir
       if (debounceTimers.has(username)) {
         clearTimeout(debounceTimers.get(username));
       }
       
+      // Debounce reduzido para melhor performance
       const debounceTime = DEBOUNCE_MIN + Math.random() * (DEBOUNCE_MAX - DEBOUNCE_MIN);
       const timer = setTimeout(() => {
         debounceTimers.delete(username);

@@ -135,7 +135,7 @@ function createRegionElement(region) {
   const regionBadge = document.createElement('span');
   regionBadge.className = 'tweet-region-badge';
   
-  if (region && region.startsWith('error_')) {
+  if (region && (region.startsWith('error_') || region === 'error_timeout')) {
     regionBadge.classList.add('error');
     const errorType = region.replace('error_', '');
     const errorMessages = {
@@ -143,7 +143,8 @@ function createRegionElement(region) {
       'no_token': '⚠️ Token Error',
       'auth': '⚠️ Auth Failed',
       'request': '⚠️ Request Error',
-      'fetch': '⚠️ Network Error'
+      'fetch': '⚠️ Network Error',
+      'timeout': '⚠️ Timeout'
     };
     regionBadge.textContent = errorMessages[errorType] || '⚠️ Error';
     return regionBadge;
@@ -180,12 +181,12 @@ function shouldShowTweet(regions) {
     return false;
   }
   
-  const validRegions = regions.filter(r => r && r !== "rate_limited" && !r.startsWith('error_'));
+  const validRegions = regions.filter(r => r && r !== "rate_limited" && !r.startsWith('error_') && r !== "error_timeout");
   
   if (validRegions.length === 0) {
     return false;
   }
-  
+
   return validRegions.some(region => {
     const regionLower = region.toLowerCase().trim();
     return selectedCountries.some(country => {
@@ -246,42 +247,43 @@ async function processTweet(tweetElement) {
   const uniqueRegions = new Set();
 
   for (const username of usernames) {
+    // Verifica se já está sendo processado ou já foi processado
     if (pendingRequests.has(username)) {
       const existingRegion = pendingRequests.get(username);
-      if (existingRegion && existingRegion !== "rate_limited") {
-        uniqueRegions.add(existingRegion);
-        regions.push(existingRegion);
+      if (existingRegion && existingRegion !== "rate_limited" && existingRegion !== null) {
+        if (!existingRegion.startsWith('error_') && existingRegion !== "error_timeout") {
+          uniqueRegions.add(existingRegion);
+          regions.push(existingRegion);
+        }
       }
       continue;
     }
 
+    // Marca como pendente
     pendingRequests.set(username, null);
     
     const regionPromise = getUserRegion(username).then(region => {
-      pendingRequests.set(username, region);
+      // Atualiza o cache de requisições pendentes
+      pendingRequests.set(username, region || "error_timeout");
       
-      if (region && region !== "rate_limited" && !region.startsWith('error_')) {
+      if (region && region !== "rate_limited" && !region.startsWith('error_') && region !== "error_timeout") {
         uniqueRegions.add(region);
         regions.push(region);
-      } else if (region && region.startsWith('error_')) {
-        regions.push(region);
-        const errorRegions = regions.filter(r => r && r.startsWith('error_'));
-        if (errorRegions.length > 0) {
-          regionContainer.innerHTML = '';
-          const badge = createRegionElement(errorRegions[0]);
-          regionContainer.appendChild(badge);
-        }
-        return region;
+      } else if (region && (region.startsWith('error_') || region === "error_timeout")) {
+        regions.push(region || "error_timeout");
       }
       
+      // Atualiza UI quando todas as requisições terminarem
       const validRegions = Array.from(uniqueRegions);
-      const errorRegions = regions.filter(r => r && r.startsWith('error_'));
+      const errorRegions = regions.filter(r => r && (r.startsWith('error_') || r === "error_timeout"));
       
       regionContainer.setAttribute('data-tweet-regions', validRegions.join(','));
       
-      if (errorRegions.length > 0) {
+      if (errorRegions.length > 0 && errorRegions.length === regions.length) {
+        // Só mostra erro se todas falharem
         regionContainer.innerHTML = '';
-        const badge = createRegionElement(errorRegions[0]);
+        const errorType = errorRegions.find(r => r === "error_timeout") ? "error_timeout" : errorRegions[0];
+        const badge = createRegionElement(errorType);
         regionContainer.appendChild(badge);
       } else if (validRegions.length > 0) {
         regionContainer.innerHTML = '';
@@ -289,7 +291,8 @@ async function processTweet(tweetElement) {
           const badge = createRegionElement(reg);
           regionContainer.appendChild(badge);
         });
-      } else if (regions.length === usernames.length && uniqueRegions.size === 0) {
+      } else if (regions.length === usernames.length && uniqueRegions.size === 0 && errorRegions.length === 0) {
+        // Todas as requisições retornaram null (sem região)
         regionContainer.innerHTML = '';
         const badge = createRegionElement(null);
         regionContainer.appendChild(badge);
