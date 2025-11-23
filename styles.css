@@ -32,9 +32,22 @@
   opacity: 0.7;
 }
 
+.tweet-region-badge.error {
+  background: linear-gradient(135deg, #f4212e 0%, #d91e2b 100%);
+  color: #ffffff;
+  font-weight: 700;
+  animation: shake 0.5s ease-in-out;
+}
+
 .tweet-region-badge.loading {
   background: linear-gradient(135deg, #71767b 0%, #536471 100%);
   animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
 }
 
 @keyframes pulse {
