@@ -44,6 +44,19 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.tweet-region-badge.random {
+  background: linear-gradient(135deg, #ffd700 0%, #ffb800 100%);
+  color: #000000;
+  font-weight: 600;
+  border: 1px solid #ffa500;
+  cursor: help;
+}
+
+.tweet-region-badge.random:hover {
+  background: linear-gradient(135deg, #ffed4e 0%, #ffd700 100%);
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.4);
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-3px); }

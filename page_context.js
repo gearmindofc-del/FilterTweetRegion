@@ -238,6 +238,96 @@
   }
 
   const regionCache = new Map();
+  const VALID_REGIONS_KEY = 'filter_tweet_region_valid_regions';
+  const MAX_STORED_REGIONS = 100; // Limita o histórico a 100 países
+
+  // Carrega histórico de países válidos
+  function loadValidRegions() {
+    try {
+      const stored = localStorage.getItem(VALID_REGIONS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+    } catch (e) {
+      console.warn('[FilterTweetRegion-Page] Erro ao carregar histórico de países:', e);
+    }
+    return [];
+  }
+
+  // Salva país válido no histórico
+  function addValidRegion(region) {
+    if (!region || region.startsWith('error_') || region === 'error_timeout' || region === 'rate_limited') {
+      return;
+    }
+
+    try {
+      let validRegions = loadValidRegions();
+      
+      // Remove duplicatas e adiciona no início
+      validRegions = validRegions.filter(r => r !== region);
+      validRegions.unshift(region);
+      
+      // Limita o tamanho do histórico
+      if (validRegions.length > MAX_STORED_REGIONS) {
+        validRegions = validRegions.slice(0, MAX_STORED_REGIONS);
+      }
+      
+      localStorage.setItem(VALID_REGIONS_KEY, JSON.stringify(validRegions));
+      console.log(`[FilterTweetRegion-Page] ✅ País adicionado ao histórico: ${region} (total: ${validRegions.length})`);
+    } catch (e) {
+      console.warn('[FilterTweetRegion-Page] Erro ao salvar país no histórico:', e);
+    }
+  }
+
+  // Carrega países do filtro do localStorage (compartilhado com content script)
+  function loadFilterCountries() {
+    try {
+      const stored = localStorage.getItem('filter_tweet_region_selected_countries');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+      }
+    } catch (e) {
+      console.warn('[FilterTweetRegion-Page] Erro ao carregar países do filtro:', e);
+    }
+    return null;
+  }
+
+  // Lista padrão de países como último fallback
+  const DEFAULT_COUNTRIES = [
+    'United States', 'Brazil', 'United Kingdom', 'France', 'Germany', 
+    'Spain', 'Italy', 'Canada', 'Australia', 'Japan', 'India', 'Mexico',
+    'Argentina', 'Portugal', 'Netherlands', 'Sweden', 'Norway', 'Denmark',
+    'Poland', 'Turkey', 'South Korea', 'China', 'Russia', 'South Africa'
+  ];
+
+  // Retorna um país aleatório do histórico, filtro ou lista padrão
+  function getRandomValidRegion() {
+    // Primeiro tenta do histórico
+    const validRegions = loadValidRegions();
+    if (validRegions.length > 0) {
+      const randomIndex = Math.floor(Math.random() * validRegions.length);
+      const randomRegion = validRegions[randomIndex];
+      console.log(`[FilterTweetRegion-Page] 🎲 País aleatório do histórico: ${randomRegion} (de ${validRegions.length} disponíveis)`);
+      return randomRegion;
+    }
+    
+    // Se não tiver histórico, usa países do filtro
+    const filterCountries = loadFilterCountries();
+    if (filterCountries && filterCountries.length > 0) {
+      const randomIndex = Math.floor(Math.random() * filterCountries.length);
+      const randomRegion = filterCountries[randomIndex];
+      console.log(`[FilterTweetRegion-Page] 🎲 País aleatório do filtro: ${randomRegion} (de ${filterCountries.length} disponíveis)`);
+      return randomRegion;
+    }
+    
+    // Último fallback: lista padrão de países
+    const randomIndex = Math.floor(Math.random() * DEFAULT_COUNTRIES.length);
+    const randomRegion = DEFAULT_COUNTRIES[randomIndex];
+    console.log(`[FilterTweetRegion-Page] 🎲 País aleatório da lista padrão: ${randomRegion}`);
+    return randomRegion;
+  }
 
   async function getCachedRegion(username) {
     const cacheKey = `region_${username}`;
@@ -362,7 +452,10 @@
     const csrf = getCSRF();
     if (!csrf) {
       console.warn(`[FilterTweetRegion-Page] CSRF token not found for @${username}`);
-      return "error_no_csrf";
+      // Sempre retorna país aleatório (nunca retorna erro)
+      const randomRegion = getRandomValidRegion();
+      console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: no_csrf)`);
+      return `RANDOM:${randomRegion}`;
     }
 
     const token = cachedBearerToken || getBearerToken();
@@ -419,7 +512,10 @@
           await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 60000)));
         }
         
-        return "rate_limited";
+        // Para rate limit, sempre retorna país aleatório
+        const randomRegion = getRandomValidRegion();
+        console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: rate_limited)`);
+        return `RANDOM:${randomRegion}`;
       }
 
       if (!res.ok) {
@@ -432,25 +528,49 @@
             localStorage.removeItem(TOKEN_CACHE_KEY);
           } catch (e) {}
           console.warn(`[FilterTweetRegion-Page] Auth error, clearing cached tokens`);
-          return "error_auth";
+          
+          // Sempre retorna país aleatório mesmo com erro de auth
+          const randomRegion = getRandomValidRegion();
+          console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: auth)`);
+          return `RANDOM:${randomRegion}`;
         }
-        return "error_request";
+        
+        // Para outros erros HTTP, sempre retorna país aleatório
+        const randomRegion = getRandomValidRegion();
+        console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: ${res.status})`);
+        return `RANDOM:${randomRegion}`;
       }
 
       const json = await res.json();
-      const region = json?.data?.user_result_by_screen_name?.result?.about_profile?.account_based_in || null;
+      let region = json?.data?.user_result_by_screen_name?.result?.about_profile?.account_based_in || null;
+      
+      // Se não encontrou região, usa fallback
+      if (!region) {
+        region = getRandomValidRegion();
+        console.log(`[FilterTweetRegion-Page] 🎲 Região não encontrada para @${username}, usando fallback: ${region}`);
+        return `RANDOM:${region}`;
+      }
+      
+      // Salva país válido no histórico
+      addValidRegion(region);
       
       await setCachedRegion(username, region);
-      console.log(`[FilterTweetRegion-Page] Region found for @${username}:`, region || 'null');
+      console.log(`[FilterTweetRegion-Page] Region found for @${username}:`, region);
       
       return region;
     } catch (error) {
       if (error.name === 'AbortError') {
         console.warn(`[FilterTweetRegion-Page] Request timeout for @${username}`);
-        return "error_timeout";
+        // Sempre retorna país aleatório ao invés de timeout
+        const randomRegion = getRandomValidRegion();
+        console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: timeout)`);
+        return `RANDOM:${randomRegion}`;
       }
       console.error(`[FilterTweetRegion-Page] Fetch error for @${username}:`, error);
-      return "error_fetch";
+      // Sempre retorna país aleatório para outros erros
+      const randomRegion = getRandomValidRegion();
+      console.log(`[FilterTweetRegion-Page] 🎲 Usando país aleatório para @${username} (erro: fetch)`);
+      return `RANDOM:${randomRegion}`;
     }
   }
 
@@ -482,11 +602,32 @@
   window.addEventListener("message", async (e) => {
     if (e.data?.type === "GET_REGION") {
       const region = await getRegion(e.data.username);
+      // Verifica se é um país aleatório (começa com "RANDOM:")
+      const isRandom = typeof region === 'string' && region.startsWith('RANDOM:');
+      let actualRegion = isRandom ? region.substring(7) : region;
+      
+      // Garante que nunca retorna null - sempre tem um país
+      if (!actualRegion || actualRegion === null) {
+        actualRegion = getRandomValidRegion();
+        console.log(`[FilterTweetRegion-Page] 🎲 Região null detectada, usando fallback: ${actualRegion}`);
+      }
+      
       window.postMessage({ 
         type: "REGION_RESULT", 
         username: e.data.username, 
-        region 
+        region: actualRegion,
+        isRandom: isRandom || !actualRegion
       }, "*");
+    }
+    
+    // Recebe países do filtro do content script
+    if (e.data?.type === "UPDATE_FILTER_COUNTRIES") {
+      try {
+        localStorage.setItem('filter_tweet_region_selected_countries', JSON.stringify(e.data.countries || []));
+        console.log('[FilterTweetRegion-Page] ✅ Países do filtro atualizados:', e.data.countries?.length || 0);
+      } catch (err) {
+        console.warn('[FilterTweetRegion-Page] Erro ao salvar países do filtro:', err);
+      }
     }
   });
 

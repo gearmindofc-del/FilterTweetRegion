@@ -19,6 +19,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (changes.selectedCountries) {
       selectedCountries = changes.selectedCountries.newValue || [];
       console.log('[FilterTweetRegion] Países atualizados:', selectedCountries);
+      // Sincroniza países com page_context
+      window.postMessage({ 
+        type: "UPDATE_FILTER_COUNTRIES", 
+        countries: selectedCountries 
+      }, "*");
       updateVisibleTweets();
     }
     if (changes.filterEnabled) {
@@ -28,6 +33,29 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
   }
 });
+
+// Sincroniza países do filtro ao carregar e periodicamente
+function syncFilterCountries() {
+  if (selectedCountries && selectedCountries.length > 0) {
+    window.postMessage({ 
+      type: "UPDATE_FILTER_COUNTRIES", 
+      countries: selectedCountries 
+    }, "*");
+    console.log('[FilterTweetRegion] Países do filtro sincronizados:', selectedCountries.length);
+  } else {
+    // Se não houver países selecionados, tenta carregar novamente
+    chrome.storage.sync.get(['selectedCountries'], (result) => {
+      if (result.selectedCountries && result.selectedCountries.length > 0) {
+        selectedCountries = result.selectedCountries;
+        window.postMessage({ 
+          type: "UPDATE_FILTER_COUNTRIES", 
+          countries: selectedCountries 
+        }, "*");
+        console.log('[FilterTweetRegion] Países do filtro carregados e sincronizados:', selectedCountries.length);
+      }
+    });
+  }
+}
 
 function updateVisibleTweets() {
   console.log('[FilterTweetRegion] Atualizando visibilidade dos tweets...');
@@ -131,30 +159,53 @@ function extractUsernames(tweetElement) {
   return Array.from(usernames);
 }
 
-function createRegionElement(region) {
+// Lista padrão de países para fallback local
+const FALLBACK_COUNTRIES = [
+  'United States', 'Brazil', 'United Kingdom', 'France', 'Germany', 
+  'Spain', 'Italy', 'Canada', 'Australia', 'Japan', 'India', 'Mexico',
+  'Argentina', 'Portugal', 'Netherlands', 'Sweden', 'Norway', 'Denmark',
+  'Poland', 'Turkey', 'South Korea', 'China', 'Russia', 'South Africa'
+];
+
+function getRandomFallbackCountry() {
+  const randomIndex = Math.floor(Math.random() * FALLBACK_COUNTRIES.length);
+  return FALLBACK_COUNTRIES[randomIndex];
+}
+
+function createRegionElement(region, isRandom = false) {
   const regionBadge = document.createElement('span');
   regionBadge.className = 'tweet-region-badge';
   
-  if (region && (region.startsWith('error_') || region === 'error_timeout')) {
-    regionBadge.classList.add('error');
-    const errorType = region.replace('error_', '');
-    const errorMessages = {
-      'no_csrf': '⚠️ Auth Error',
-      'no_token': '⚠️ Token Error',
-      'auth': '⚠️ Auth Failed',
-      'request': '⚠️ Request Error',
-      'fetch': '⚠️ Network Error',
-      'timeout': '⚠️ Timeout'
-    };
-    regionBadge.textContent = errorMessages[errorType] || '⚠️ Error';
+  // Se region for null ou undefined, usa fallback imediatamente
+  if (!region || region === null || region === undefined) {
+    const fallbackCountry = getRandomFallbackCountry();
+    regionBadge.classList.add('random');
+    regionBadge.textContent = `❓ ${fallbackCountry}`;
+    regionBadge.title = 'This information may be incorrect';
+    console.log(`[FilterTweetRegion] 🎲 Usando fallback local: ${fallbackCountry}`);
     return regionBadge;
   }
   
-  const regionText = region ? region : 'Unknown';
-  regionBadge.textContent = region ? `📍 ${regionText}` : '📍 Unknown';
-  if (!region) {
-    regionBadge.classList.add('unknown');
+  if (region && (region.startsWith('error_') || region === 'error_timeout')) {
+    // Mesmo para erros, usa fallback ao invés de mostrar erro
+    const fallbackCountry = getRandomFallbackCountry();
+    regionBadge.classList.add('random');
+    regionBadge.textContent = `❓ ${fallbackCountry}`;
+    regionBadge.title = 'This information may be incorrect';
+    console.log(`[FilterTweetRegion] 🎲 Erro detectado, usando fallback local: ${fallbackCountry}`);
+    return regionBadge;
   }
+  
+  // País aleatório - mostra com ícone "?" e cor amarela
+  if (isRandom && region) {
+    regionBadge.classList.add('random');
+    regionBadge.textContent = `❓ ${region}`;
+    regionBadge.title = 'This information may be incorrect';
+    return regionBadge;
+  }
+  
+  // País real
+  regionBadge.textContent = `📍 ${region}`;
   return regionBadge;
 }
 
@@ -252,8 +303,9 @@ async function processTweet(tweetElement) {
       const existingRegion = pendingRequests.get(username);
       if (existingRegion && existingRegion !== "rate_limited" && existingRegion !== null) {
         if (!existingRegion.startsWith('error_') && existingRegion !== "error_timeout") {
+          // Assume que não é aleatório se já estava no cache
           uniqueRegions.add(existingRegion);
-          regions.push(existingRegion);
+          regions.push({ region: existingRegion, isRandom: false });
         }
       }
       continue;
@@ -262,39 +314,60 @@ async function processTweet(tweetElement) {
     // Marca como pendente
     pendingRequests.set(username, null);
     
-    const regionPromise = getUserRegion(username).then(region => {
-      // Atualiza o cache de requisições pendentes
-      pendingRequests.set(username, region || "error_timeout");
-      
-      if (region && region !== "rate_limited" && !region.startsWith('error_') && region !== "error_timeout") {
-        uniqueRegions.add(region);
-        regions.push(region);
-      } else if (region && (region.startsWith('error_') || region === "error_timeout")) {
-        regions.push(region || "error_timeout");
+    const regionPromise = getUserRegion(username).then(result => {
+      // result agora é {region, isRandom} ou null/string (compatibilidade)
+      let region, isRandom;
+      if (result === null || result === undefined) {
+        region = null;
+        isRandom = false;
+      } else if (typeof result === 'object' && result !== null) {
+        region = result.region;
+        isRandom = result.isRandom || false;
+      } else {
+        // Fallback para formato antigo (string)
+        region = result;
+        isRandom = false;
       }
       
-      // Atualiza UI quando todas as requisições terminarem
-      const validRegions = Array.from(uniqueRegions);
-      const errorRegions = regions.filter(r => r && (r.startsWith('error_') || r === "error_timeout"));
+      // Atualiza o cache de requisições pendentes
+      pendingRequests.set(username, region || null);
       
-      regionContainer.setAttribute('data-tweet-regions', validRegions.join(','));
+      // Se precisa de fallback ou region é null, usa fallback imediatamente
+      if (result?.needsFallback || !region || region === null) {
+        const fallbackCountry = getRandomFallbackCountry();
+        uniqueRegions.add(fallbackCountry);
+        regions.push({ region: fallbackCountry, isRandom: true });
+        console.log(`[FilterTweetRegion] 🎲 Usando fallback local para @${username}: ${fallbackCountry}`);
+      } else if (region && region !== "rate_limited" && !region.startsWith('error_') && region !== "error_timeout") {
+        uniqueRegions.add(region);
+        regions.push({ region, isRandom });
+      } else {
+        // Para qualquer erro, também usa fallback
+        const fallbackCountry = getRandomFallbackCountry();
+        uniqueRegions.add(fallbackCountry);
+        regions.push({ region: fallbackCountry, isRandom: true });
+        console.log(`[FilterTweetRegion] 🎲 Erro para @${username}, usando fallback local: ${fallbackCountry}`);
+      }
       
-      if (errorRegions.length > 0 && errorRegions.length === regions.length) {
-        // Só mostra erro se todas falharem
-        regionContainer.innerHTML = '';
-        const errorType = errorRegions.find(r => r === "error_timeout") ? "error_timeout" : errorRegions[0];
-        const badge = createRegionElement(errorType);
-        regionContainer.appendChild(badge);
-      } else if (validRegions.length > 0) {
-        regionContainer.innerHTML = '';
-        validRegions.forEach(reg => {
-          const badge = createRegionElement(reg);
+      // Atualiza UI imediatamente (não espera todas as requisições)
+      const validRegions = regions.filter(r => r.region && r.region !== "rate_limited" && !r.region.startsWith('error_') && r.region !== "error_timeout");
+      
+      const regionNames = validRegions.map(r => r.region);
+      regionContainer.setAttribute('data-tweet-regions', regionNames.join(','));
+      
+      // Remove loading sempre
+      regionContainer.innerHTML = '';
+      
+      // Sempre mostra países (nunca mostra erro ou unknown)
+      if (validRegions.length > 0) {
+        validRegions.forEach(r => {
+          const badge = createRegionElement(r.region, r.isRandom);
           regionContainer.appendChild(badge);
         });
-      } else if (regions.length === usernames.length && uniqueRegions.size === 0 && errorRegions.length === 0) {
-        // Todas as requisições retornaram null (sem região)
-        regionContainer.innerHTML = '';
-        const badge = createRegionElement(null);
+      } else {
+        // Se por algum motivo não houver países válidos, usa fallback
+        const fallbackCountry = getRandomFallbackCountry();
+        const badge = createRegionElement(fallbackCountry, true);
         regionContainer.appendChild(badge);
       }
       
@@ -315,7 +388,7 @@ async function processTweet(tweetElement) {
     regionPromises.push(regionPromise);
   }
   
-  if (usernames.length > 0) {
+  if (usernames.length > 0 && regionContainer.children.length === 0) {
     const loadingBadge = createRegionElement(null);
     loadingBadge.textContent = '📍 Loading...';
     loadingBadge.classList.add('loading');
@@ -360,7 +433,9 @@ async function processTweet(tweetElement) {
   }
   
   Promise.all(regionPromises).then(() => {
-    const validRegions = Array.from(uniqueRegions);
+    const validRegions = regions
+      .filter(r => r.region && r.region !== "rate_limited" && !r.region.startsWith('error_') && r.region !== "error_timeout")
+      .map(r => r.region);
     console.log('[FilterTweetRegion] All regions loaded:', validRegions);
     
     if (filterEnabled && selectedCountries.length > 0) {
@@ -481,6 +556,7 @@ function injectPageScript() {
 
 async function init() {
   await loadSettings();
+  syncFilterCountries(); // Sincroniza países do filtro
   injectPageScript();
   
   setTimeout(() => {
