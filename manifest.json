@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Filter Tweet Region",
   "version": "1.0.0",
-  "description": "Exibe a região dos usuários mencionados nos tweets",
+  "description": "Display user regions on tweets and filter by country",
   "permissions": [
     "cookies",
     "storage"

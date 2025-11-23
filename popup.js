@@ -13,6 +13,8 @@ const countries = [
 
 let selectedCountries = [];
 let filterEnabled = false;
+let availableFilter = '';
+let selectedFilter = '';
 
 function loadSettings() {
   chrome.storage.sync.get(['selectedCountries', 'filterEnabled'], (result) => {
@@ -33,41 +35,76 @@ function updateToggle() {
   }
 }
 
-function renderCountries(filter = '') {
-  const list = document.getElementById('countriesList');
-  list.innerHTML = '';
+function createCountryItem(country, isSelected) {
+  const item = document.createElement('div');
+  item.className = 'country-item';
   
-  const filtered = countries.filter(country => 
-    country.toLowerCase().includes(filter.toLowerCase())
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'country-checkbox';
+  checkbox.checked = isSelected;
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      if (!selectedCountries.includes(country)) {
+        selectedCountries.push(country);
+      }
+    } else {
+      selectedCountries = selectedCountries.filter(c => c !== country);
+    }
+    saveSettings();
+    renderCountries();
+  });
+  
+  const name = document.createElement('span');
+  name.className = 'country-name';
+  name.textContent = country;
+  
+  item.appendChild(checkbox);
+  item.appendChild(name);
+  
+  return item;
+}
+
+function renderCountries() {
+  const availableList = document.getElementById('availableList');
+  const selectedList = document.getElementById('selectedList');
+  const availableCount = document.getElementById('availableCount');
+  const selectedCount = document.getElementById('selectedCount');
+  
+  availableList.innerHTML = '';
+  selectedList.innerHTML = '';
+  
+  const available = countries.filter(country => 
+    !selectedCountries.includes(country) &&
+    country.toLowerCase().includes(availableFilter.toLowerCase())
   );
   
-  filtered.forEach(country => {
-    const item = document.createElement('div');
-    item.className = 'country-item';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'country-checkbox';
-    checkbox.checked = selectedCountries.includes(country);
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked) {
-        if (!selectedCountries.includes(country)) {
-          selectedCountries.push(country);
-        }
-      } else {
-        selectedCountries = selectedCountries.filter(c => c !== country);
-      }
-      saveSettings();
+  const selected = selectedCountries
+    .filter(country => country.toLowerCase().includes(selectedFilter.toLowerCase()))
+    .sort();
+  
+  availableCount.textContent = available.length;
+  selectedCount.textContent = selected.length;
+  
+  if (available.length === 0 && availableFilter) {
+    availableList.innerHTML = '<div class="empty-state">No countries found</div>';
+  } else if (available.length === 0) {
+    availableList.innerHTML = '<div class="empty-state">All countries selected</div>';
+  } else {
+    available.forEach(country => {
+      availableList.appendChild(createCountryItem(country, false));
     });
-    
-    const name = document.createElement('span');
-    name.className = 'country-name';
-    name.textContent = country;
-    
-    item.appendChild(checkbox);
-    item.appendChild(name);
-    list.appendChild(item);
-  });
+  }
+  
+  if (selected.length === 0 && selectedFilter) {
+    selectedList.innerHTML = '<div class="empty-state">No countries found</div>';
+  } else if (selected.length === 0) {
+    selectedList.innerHTML = '<div class="empty-state">No countries selected</div>';
+  } else {
+    selected.forEach(country => {
+      selectedList.appendChild(createCountryItem(country, true));
+    });
+  }
 }
 
 function saveSettings() {
@@ -75,7 +112,7 @@ function saveSettings() {
     selectedCountries: selectedCountries,
     filterEnabled: filterEnabled
   }, () => {
-    console.log('Configurações salvas:', { selectedCountries, filterEnabled });
+    console.log('Settings saved:', { selectedCountries, filterEnabled });
   });
 }
 
@@ -86,8 +123,36 @@ document.getElementById('filterToggle').addEventListener('click', () => {
 });
 
 document.getElementById('searchBox').addEventListener('input', (e) => {
-  renderCountries(e.target.value);
+  availableFilter = e.target.value;
+  renderCountries();
+});
+
+document.getElementById('searchSelectedBox').addEventListener('input', (e) => {
+  selectedFilter = e.target.value;
+  renderCountries();
+});
+
+document.getElementById('selectAllBtn').addEventListener('click', () => {
+  const available = countries.filter(country => 
+    !selectedCountries.includes(country) &&
+    country.toLowerCase().includes(availableFilter.toLowerCase())
+  );
+  selectedCountries = [...new Set([...selectedCountries, ...available])];
+  saveSettings();
+  renderCountries();
+});
+
+document.getElementById('deselectAllBtn').addEventListener('click', () => {
+  if (selectedFilter) {
+    const toRemove = selectedCountries.filter(country => 
+      country.toLowerCase().includes(selectedFilter.toLowerCase())
+    );
+    selectedCountries = selectedCountries.filter(c => !toRemove.includes(c));
+  } else {
+    selectedCountries = [];
+  }
+  saveSettings();
+  renderCountries();
 });
 
 loadSettings();
-

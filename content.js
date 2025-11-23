@@ -134,6 +134,21 @@ function extractUsernames(tweetElement) {
 function createRegionElement(region) {
   const regionBadge = document.createElement('span');
   regionBadge.className = 'tweet-region-badge';
+  
+  if (region && region.startsWith('error_')) {
+    regionBadge.classList.add('error');
+    const errorType = region.replace('error_', '');
+    const errorMessages = {
+      'no_csrf': '⚠️ Auth Error',
+      'no_token': '⚠️ Token Error',
+      'auth': '⚠️ Auth Failed',
+      'request': '⚠️ Request Error',
+      'fetch': '⚠️ Network Error'
+    };
+    regionBadge.textContent = errorMessages[errorType] || '⚠️ Error';
+    return regionBadge;
+  }
+  
   const regionText = region ? region : 'Unknown';
   regionBadge.textContent = region ? `📍 ${regionText}` : '📍 Unknown';
   if (!region) {
@@ -161,12 +176,19 @@ function shouldShowTweet(regions) {
     return true;
   }
   
+  if (!regions || regions.length === 0) {
+    return false;
+  }
+  
   return regions.some(region => {
-    if (!region) return false;
-    return selectedCountries.some(country => 
-      region.toLowerCase().includes(country.toLowerCase()) || 
-      country.toLowerCase().includes(region.toLowerCase())
-    );
+    if (!region || region === "rate_limited") return false;
+    const regionLower = region.toLowerCase().trim();
+    return selectedCountries.some(country => {
+      const countryLower = country.toLowerCase().trim();
+      return regionLower === countryLower || 
+             regionLower.includes(countryLower) || 
+             countryLower.includes(regionLower);
+    });
   });
 }
 
@@ -247,7 +269,8 @@ async function processTweet(tweetElement) {
           const badge = createRegionElement(reg);
           regionContainer.appendChild(badge);
         });
-      } else if (regions.length === usernames.length) {
+      } else if (regions.length === usernames.length && uniqueRegions.size === 0) {
+        regionContainer.innerHTML = '';
         const badge = createRegionElement(null);
         regionContainer.appendChild(badge);
       }
@@ -313,18 +336,18 @@ async function processTweet(tweetElement) {
   }
   
   Promise.all(regionPromises).then(() => {
-    const validRegions = regions.filter(r => r);
-    console.log('[FilterTweetRegion] Todas as regiões carregadas:', validRegions);
+    const validRegions = Array.from(uniqueRegions);
+    console.log('[FilterTweetRegion] All regions loaded:', validRegions);
     
     if (filterEnabled && selectedCountries.length > 0) {
       const cellInnerDiv = article.closest('[data-testid="cellInnerDiv"]');
       if (cellInnerDiv) {
         if (!shouldShowTweet(validRegions)) {
           cellInnerDiv.style.display = 'none';
-          console.log('[FilterTweetRegion] Tweet ocultado (região não selecionada):', validRegions, 'Países selecionados:', selectedCountries);
+          console.log('[FilterTweetRegion] Tweet hidden (region not selected):', validRegions, 'Selected countries:', selectedCountries);
         } else {
           cellInnerDiv.style.display = '';
-          console.log('[FilterTweetRegion] Tweet visível (região selecionada):', validRegions);
+          console.log('[FilterTweetRegion] Tweet visible (region selected):', validRegions);
         }
       }
     } else {
